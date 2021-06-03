@@ -40,10 +40,7 @@
 #define SERVO_3 PB8
 #define SERVO_4 PB9
 
-#define ARR_VALUE 19999
-#define PSC_VALUE 71
-#define PWM_MIN 1000
-#define PWM_MAX 2000
+#define ESP Serial1
 
 //***************STRUCTS/ENUMS***************
 
@@ -108,10 +105,10 @@ void setup() {
   Wire.setSCL(SCL_PIN);
   Wire.setSDA(SDA_PIN);
   analogReadResolution(12);
-  Serial1.begin(115200);
-  Serial1.println("AT");
-  while (!Serial1.find("OK")) {
-    Serial1.println("AT");
+  ESP.begin(115200);
+  ESP.println("AT");
+  while (!ESP.find("OK")) {
+    ESP.println("AT");
     ErrorHandler(CONNECTION_ERROR);
   }
 }
@@ -220,3 +217,11 @@ void MoveServos() {
   servo3.detach();
   servo4.detach();
 }
+
+void UpdateStreamData(StreamData_t *data) {}
+
+void WiFiConnectionInit() {}
+
+void SendData(StreamData_t *data) {}
+
+void ReadPowerSensors() {}
