@@ -2,7 +2,7 @@
  * @file main.cpp
  * @author Mustafa Gönülkırmaz (mgonulkrmaz@gmail.com)
  * @brief
- * @version 0.5
+ * @version 0.7
  * @date 2021-05-30
  *
  * @copyright Copyright (c) 2021
@@ -48,6 +48,7 @@ typedef struct {
   float_t voltage = 0.0f;
   float_t current = 0.0f;
   float_t power = 0.0f;
+  float totalPower = 0.0f;
 } VoltageCurrentSens_t;
 
 typedef struct {
@@ -57,6 +58,11 @@ typedef struct {
   float_t sunAngle;
   float_t batteryVoltage;
 } StreamData_t;
+
+typedef struct {
+  float_t RAW;
+  float_t POS;
+} LDR_t;
 
 enum ERRORTYPE {
   NO_ERROR = 0,
@@ -84,11 +90,13 @@ void ErrorHandler(ERRORTYPE);
 VoltageCurrentSens_t SolarPanel;
 VoltageCurrentSens_t Battery;
 
+LDR_t ldr[3];
+
 StreamData_t StreamData;
 
-BH1750 luxMeter();
-INA226 solarPowerMeter();
-INA226 batteryPowerMeter();
+BH1750 luxMeter(BH1750_ADDR);
+INA226 solarPowerMeter(Wire);
+INA226 batteryPowerMeter(Wire);
 
 Servo servo1;
 Servo servo2;
@@ -96,7 +104,7 @@ Servo servo3;
 Servo servo4;
 
 uint8_t servo_pos[4] = {90, 90, 90, 90};
-uint16_t ldr_value[3] = {0, 0, 0};
+float luxValue = 0.0f;
 uint16_t state = 1;
 
 void setup() {
@@ -105,6 +113,20 @@ void setup() {
   Wire.setSCL(SCL_PIN);
   Wire.setSDA(SDA_PIN);
   analogReadResolution(12);
+
+  solarPowerMeter.begin(INA226_ADDR_1);
+  batteryPowerMeter.begin(INA226_ADDR_2);
+  solarPowerMeter.configure(INA226_AVERAGES_1, INA226_BUS_CONV_TIME_1100US,
+                            INA226_SHUNT_CONV_TIME_1100US,
+                            INA226_MODE_SHUNT_BUS_CONT);
+  batteryPowerMeter.configure(INA226_AVERAGES_1, INA226_BUS_CONV_TIME_1100US,
+                              INA226_SHUNT_CONV_TIME_1100US,
+                              INA226_MODE_SHUNT_BUS_CONT);
+  solarPowerMeter.calibrate();
+  batteryPowerMeter.calibrate();
+
+  luxMeter.begin();
+
   ESP.begin(115200);
   ESP.println("AT");
   while (!ESP.find("OK")) {
@@ -183,12 +205,6 @@ void GPIOInit(void) {
   pinMode(LDR3, INPUT);
 }
 
-void ReadLightSensors(void) {
-  ldr_value[0] = analogRead(LDR1);
-  ldr_value[1] = analogRead(LDR2);
-  ldr_value[2] = analogRead(LDR3);
-}
-
 void ErrorHandler(ERRORTYPE err) {
   switch (err) {
     case NO_ERROR:
@@ -224,4 +240,21 @@ void WiFiConnectionInit() {}
 
 void SendData(StreamData_t *data) {}
 
-void ReadPowerSensors() {}
+void ReadPowerSensors() {
+  SolarPanel.voltage = solarPowerMeter.readBusVoltage();
+  SolarPanel.current = solarPowerMeter.readShuntCurrent();
+  SolarPanel.power = solarPowerMeter.readBusPower();
+  SolarPanel.totalPower += SolarPanel.power;
+  Battery.voltage = batteryPowerMeter.readBusVoltage();
+  Battery.current = batteryPowerMeter.readShuntCurrent();
+  Battery.power = batteryPowerMeter.readBusPower();
+  Battery.totalPower += Battery.power;
+}
+
+void ReadLightSensors(void) {
+  ldr[0].RAW = analogRead(LDR1);
+  ldr[1].RAW = analogRead(LDR2);
+  ldr[2].RAW = analogRead(LDR3);
+
+  luxValue = luxMeter.readLightLevel();
+}
