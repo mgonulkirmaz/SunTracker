@@ -2,7 +2,7 @@
  * @file main.cpp
  * @author Mustafa Gönülkırmaz (mgonulkrmaz@gmail.com)
  * @brief
- * @version 0.7
+ * @version 0.9
  * @date 2021-05-30
  *
  * @copyright Copyright (c) 2021
@@ -21,14 +21,17 @@
 
 //***************DEFINES***************
 
+//#define ESP8266
+#define DEBUG
+
 #define SCL_PIN PB10
 #define SDA_PIN PB11
 
 #define SSID
 #define PASSWORD
 
-#define INA226_ADDR_1 0x40
-#define INA226_ADDR_2 0x44
+#define INA226_ADDR_1 0x44
+#define INA226_ADDR_2 0x40
 #define BH1750_ADDR 0x23
 
 #define LDR1 PA0
@@ -40,28 +43,28 @@
 #define SERVO_3 PB8
 #define SERVO_4 PB9
 
-#define ESP Serial1
+#define ESP Serial11
 
 //***************STRUCTS/ENUMS***************
 
 typedef struct {
-  float_t voltage = 0.0f;
-  float_t current = 0.0f;
-  float_t power = 0.0f;
-  float totalPower = 0.0f;
+  float voltage;
+  float current;
+  float power;
+  float totalPower;
 } VoltageCurrentSens_t;
 
 typedef struct {
-  float_t inputPower;
-  float_t outputPower;
-  float_t luxValue;
-  float_t sunAngle;
-  float_t batteryVoltage;
+  float inputPower;
+  float outputPower;
+  float luxValue;
+  float sunAngle;
+  float batteryVoltage;
 } StreamData_t;
 
 typedef struct {
-  float_t RAW;
-  float_t POS;
+  float RAW;
+  float POS;
 } LDR_t;
 
 enum ERRORTYPE {
@@ -107,15 +110,36 @@ uint8_t servo_pos[4] = {90, 90, 90, 90};
 float luxValue = 0.0f;
 uint16_t state = 1;
 
+uint32_t remoteUpdateTimer = 300000, lastRemoteUpdateTime;
+uint32_t servoPositionUpdateTimer = 30000, lastServoUpdateTime;
+
 void setup() {
   SystemClockInit();
   GPIOInit();
   Wire.setSCL(SCL_PIN);
   Wire.setSDA(SDA_PIN);
+  Wire.begin();
   analogReadResolution(12);
 
-  solarPowerMeter.begin(INA226_ADDR_1);
-  batteryPowerMeter.begin(INA226_ADDR_2);
+  lastRemoteUpdateTime = millis();
+  lastServoUpdateTime = millis();
+
+#ifdef DEBUG
+  Serial1.begin(115200);
+#endif
+
+  if (!solarPowerMeter.begin(INA226_ADDR_1)) {
+#ifdef DEBUG
+    Serial1.println("Cannot connect to solar power meter!");
+    delay(1000);
+#endif
+  }
+  if (!batteryPowerMeter.begin(INA226_ADDR_2)) {
+#ifdef DEBUG
+    Serial1.println("Cannot connect to battery power meter!");
+    delay(1000);
+#endif
+  }
   solarPowerMeter.configure(INA226_AVERAGES_1, INA226_BUS_CONV_TIME_1100US,
                             INA226_SHUNT_CONV_TIME_1100US,
                             INA226_MODE_SHUNT_BUS_CONT);
@@ -125,14 +149,23 @@ void setup() {
   solarPowerMeter.calibrate();
   batteryPowerMeter.calibrate();
 
-  luxMeter.begin();
+  if (!luxMeter.begin(BH1750::Mode::CONTINUOUS_LOW_RES_MODE)) {
+#ifdef DEBUG
+    Serial1.println("Cannot connect to lux meter!");
+    delay(1000);
+#endif
+  }
 
+  luxMeter.configure(BH1750::Mode::CONTINUOUS_LOW_RES_MODE);
+
+#ifdef ESP8266
   ESP.begin(115200);
   ESP.println("AT");
   while (!ESP.find("OK")) {
     ESP.println("AT");
     ErrorHandler(CONNECTION_ERROR);
   }
+#endif
 }
 
 void loop() {
@@ -146,19 +179,25 @@ void loop() {
       state++;
       break;
     case 3:
-      UpdateStreamData(&StreamData);
+      if (millis() - lastRemoteUpdateTime > remoteUpdateTimer) {
+        UpdateStreamData(&StreamData);
+#ifdef ESP8266
+        WiFiConnectionInit();
+        SendData(&StreamData);
+#endif
+        lastRemoteUpdateTime = millis();
+      }
       state++;
       break;
     case 4:
-      MoveServos();
+      if (millis() - lastServoUpdateTime > servoPositionUpdateTimer) {
+        MoveServos();
+        lastServoUpdateTime = millis();
+      }
+
       state++;
       break;
     case 5:
-      WiFiConnectionInit();
-      SendData(&StreamData);
-      state++;
-      break;
-    case 6:
       state = 1;
       break;
     default:
@@ -208,14 +247,29 @@ void GPIOInit(void) {
 void ErrorHandler(ERRORTYPE err) {
   switch (err) {
     case NO_ERROR:
+#ifdef DEBUG
+      Serial1.println("NO ERROR");
+#endif
       break;
     case CONNECTION_ERROR:
+#ifdef DEBUG
+      Serial1.println("CONNECTION ERROR");
+#endif
       break;
     case STATE_ERROR:
+#ifdef DEBUG
+      Serial1.println("STATE ERROR");
+#endif
       break;
     case SENSOR_ERROR:
+#ifdef DEBUG
+      Serial1.println("SENSOR ERROR");
+#endif
       break;
     case POWER_ERROR:
+#ifdef DEBUG
+      Serial1.println("POWER ERROR");
+#endif
       break;
     default:
       break;
@@ -228,13 +282,27 @@ void MoveServos() {
   servo3.attach(SERVO_3);
   servo4.attach(SERVO_4);
 
+#ifdef DEBUG
+  char buf[128];
+  snprintf(buf, 128,
+           "\n-----\nServo Positions\n Servo 1: %d | Servo 2: %d | Servo 3: %d "
+           "| Servo 4: %d",
+           servo_pos[0], servo_pos[1], servo_pos[2], servo_pos[3]);
+  Serial1.print(buf);
+#endif
+
   servo1.detach();
   servo2.detach();
   servo3.detach();
   servo4.detach();
 }
 
-void UpdateStreamData(StreamData_t *data) {}
+void UpdateStreamData(StreamData_t *data) {
+#ifdef DEBUG
+  Serial1.println("-----");
+  Serial1.print("\nStream Update");
+#endif
+}
 
 void WiFiConnectionInit() {}
 
@@ -249,6 +317,20 @@ void ReadPowerSensors() {
   Battery.current = batteryPowerMeter.readShuntCurrent();
   Battery.power = batteryPowerMeter.readBusPower();
   Battery.totalPower += Battery.power;
+
+#ifdef DEBUG
+  char buf[156];
+  snprintf(
+      buf, 156,
+      "\n-----\nPower Values\nSolar -> Voltage: %s V  | Current: %s A | "
+      "Power: %s\nBattery -> Voltage: %s V | Current: %s A | "
+      "Power: %s",
+      String(SolarPanel.voltage, 2).c_str(),
+      String(SolarPanel.current, 2).c_str(),
+      String(SolarPanel.power, 2).c_str(), String(Battery.voltage, 2).c_str(),
+      String(Battery.current, 2).c_str(), String(Battery.power, 2).c_str());
+  Serial1.print(buf);
+#endif
 }
 
 void ReadLightSensors(void) {
@@ -256,5 +338,17 @@ void ReadLightSensors(void) {
   ldr[1].RAW = analogRead(LDR2);
   ldr[2].RAW = analogRead(LDR3);
 
-  luxValue = luxMeter.readLightLevel();
+  if (luxMeter.measurementReady()) {
+    luxValue = luxMeter.readLightLevel();
+  }
+
+#ifdef DEBUG
+  char buf[128];
+  snprintf(buf, 128,
+           "\n-----\nLight Sensor Values\nLDR 1: %s | LDR 2: %s | LDR 3: %s | "
+           "Lux: %s",
+           String(ldr[0].RAW, 2).c_str(), String(ldr[1].RAW, 2).c_str(),
+           String(ldr[2].RAW, 2).c_str(), String(luxValue, 2).c_str());
+  Serial1.print(buf);
+#endif
 }
